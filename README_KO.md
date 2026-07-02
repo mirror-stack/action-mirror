@@ -14,6 +14,12 @@
 | 🪪 **action-mirror** (현재 위치) | 에이전트 행동 | **누가 뭘 했나, 증명 가능하게?** |
 | 👁 [mirror-witness](https://github.com/bhyi4/mirror-witness) | 운영자 간 증인 게시판 | 또 **누가 증인** 섰나? |
 
+> **원장 포맷**: 행동 원장은 패밀리 규범 명세
+> **[MIRROR-SPEC v1.0](https://github.com/bhyi4/measure-mirror/blob/main/docs/SPEC.md)**
+> ([한국어 참고 번역](https://github.com/bhyi4/measure-mirror/blob/main/docs/SPEC_KO.md),
+> 2026-07-02 비준)을 따르며, 이 패키지는 그 참조구현입니다. 참고: `am`은 genesis 마커를
+> `"GENESIS"`(대문자)로 쓰는데, 명세는 대소문자 무관 비교(§5.1)라 둘 다 유효합니다.
+
 넷을 합치면 = 🪞🔎🪪 [미러스택](https://github.com/bhyi4/measure-mirror/tree/main/stack).
 
 💬 **[Discussions](https://github.com/orgs/mirror-stack/discussions)** — 질문 · 아이디어 · 독립 재현 공유 환영.
