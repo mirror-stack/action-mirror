@@ -15,7 +15,7 @@ Third member of the mirror family — same DNA, new domain:
 | 👁 [mirror-witness](https://github.com/mirror-stack/mirror-witness) | Cross-operator witness board | Who else **witnessed** it? |
 
 > **Ledger format**: action ledgers conform to
-> **[MIRROR-SPEC v1.0](https://github.com/mirror-stack/measure-mirror/blob/main/docs/SPEC.md)**
+> **[MIRROR-SPEC v1.1](https://github.com/mirror-stack/measure-mirror/blob/main/docs/SPEC.md)**
 > (the family's normative format, ratified 2026-07-02) — this package is a reference
 > implementation. Note: `am` writes the genesis marker as `"GENESIS"`; the spec
 > compares it case-insensitively (§5.1), so both `"GENESIS"` and `"genesis"` are valid.

@@ -15,7 +15,7 @@
 | 👁 [mirror-witness](https://github.com/mirror-stack/mirror-witness) | 운영자 간 증인 게시판 | 또 **누가 증인** 섰나? |
 
 > **원장 포맷**: 행동 원장은 패밀리 규범 명세
-> **[MIRROR-SPEC v1.0](https://github.com/mirror-stack/measure-mirror/blob/main/docs/SPEC.md)**
+> **[MIRROR-SPEC v1.1](https://github.com/mirror-stack/measure-mirror/blob/main/docs/SPEC.md)**
 > ([한국어 참고 번역](https://github.com/mirror-stack/measure-mirror/blob/main/docs/SPEC_KO.md),
 > 2026-07-02 비준)을 따르며, 이 패키지는 그 참조구현입니다. 참고: `am`은 genesis 마커를
 > `"GENESIS"`(대문자)로 쓰는데, 명세는 대소문자 무관 비교(§5.1)라 둘 다 유효합니다.
