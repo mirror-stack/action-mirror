@@ -84,7 +84,7 @@ def _seal(ledger_path: str, entry: dict, sign_key: str | None = None) -> dict:
     body = {k: v for k, v in entry.items() if k not in ("seal", "sig")}
     entry["seal"] = hashlib.sha256(
         json.dumps(body, sort_keys=True, ensure_ascii=False).encode()
-    ).hexdigest()[:16]
+    ).hexdigest()
     if sign_key is not None:
         from . import identity
         entry["sig"] = identity.sign(sign_key, entry["seal"])
@@ -95,7 +95,22 @@ def _seal(ledger_path: str, entry: dict, sign_key: str | None = None) -> dict:
 
 def _content_hash(content) -> str:
     b = content.encode("utf-8") if isinstance(content, str) else content
-    return hashlib.sha256(b).hexdigest()[:16]
+    return hashlib.sha256(b).hexdigest()
+
+
+_LEGACY_HASH_LEN = 16   # pre-v0.6 truncated seals/hashes — see _hash_matches
+
+
+def _hash_matches(stored: str, full_hex: str) -> bool:
+    """Match a stored seal/hash against the full SHA-256 hex digest.
+
+    New entries use the FULL 64-hex digest: 16-hex (64-bit) truncation lets a
+    dishonest sealer birthday-search (~2^32) two entries sharing one seal.
+    Legacy 16-hex values stay verifiable via prefix match (their original,
+    weaker strength is unchanged — the upgrade protects new entries)."""
+    if stored == full_hex:
+        return True
+    return len(stored) == _LEGACY_HASH_LEN and stored == full_hex[:_LEGACY_HASH_LEN]
 
 
 def verify_chain(ledger_path: str) -> list[Finding]:
@@ -113,10 +128,10 @@ def verify_chain(ledger_path: str) -> list[Finding]:
                             f"Entry {i}: prev_seal broken — "
                             "deletion/insertion/reorder detected.")]
         body = {k: v for k, v in e.items() if k not in ("seal", "sig")}
-        expect = hashlib.sha256(
+        expect_full = hashlib.sha256(
             json.dumps(body, sort_keys=True, ensure_ascii=False).encode()
-        ).hexdigest()[:16]
-        if e.get("seal") != expect:
+        ).hexdigest()
+        if not _hash_matches(str(e.get("seal", "")), expect_full):
             return [Finding("⛓ chain", "FAIL",
                             f"Entry {i}: seal mismatch — content modified.")]
         prev = e["seal"]
@@ -145,8 +160,10 @@ def verify_signatures(ledger_path: str) -> list[Finding]:
         # recompute the seal from content so a tampered body is caught here too, not only by
         # verify_chain — the signature must vouch for the ACTUAL content, not a stale seal.
         body = {k: v for k, v in e.items() if k not in ("seal", "sig")}
-        real_seal = hashlib.sha256(
-            json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+        full = hashlib.sha256(
+            json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        # legacy entries signed the truncated seal — verify against the stored-length form
+        real_seal = full[:_LEGACY_HASH_LEN] if len(str(e.get("seal", ""))) == _LEGACY_HASH_LEN else full
         if not e.get("sig") or not identity.verify(e["pubkey"], real_seal, e["sig"]):
             bad.append(i)
     if bad:
@@ -237,7 +254,8 @@ def attest(ledger_path: str, *, agent: str | None = None,
         return {"verdict": "ATTESTED", "matches": matches,
                 "note": f"{len(matches)} sealed record(s) match."}
     h = _content_hash(content)
-    hash_hits = [e for e in matches if e.get("content_hash") == h]
+    hash_hits = [e for e in matches
+                 if _hash_matches(str(e.get("content_hash", "")), h)]
     if hash_hits:
         return {"verdict": "ATTESTED", "matches": hash_hits,
                 "note": f"{len(hash_hits)} sealed record(s) match, content hash verified ({h})."}
@@ -263,7 +281,7 @@ def witness_peer(my_ledger: str, peer_ledger: str, *, peer_name: str) -> dict:
     anchor = "empty"
     if os.path.exists(peer_ledger):
         with open(peer_ledger, "rb") as f:
-            anchor = hashlib.sha256(f.read()).hexdigest()[:16]
+            anchor = hashlib.sha256(f.read()).hexdigest()
     entry = {
         "_type":          "peer_witness",
         "ts":             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

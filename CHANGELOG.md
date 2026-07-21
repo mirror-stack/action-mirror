@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.2.0] — 2026-07-17
+
+### Security
+- **Seal/hash width: 16-hex (64-bit) truncation → full 64-hex SHA-256**
+  (chain seals, `content_hash`, `peer_anchor`) — closes the dishonest-sealer
+  birthday-collision gap (~2^32). Legacy 16-hex values keep verifying via
+  prefix match (`_hash_matches`); signatures over legacy truncated seals
+  still verify. Mixed chains supported; no migration needed.
+
+### Added
+- `tests/test_adversarial.py` — 14 attack-scenario tests: mid-chain deletion,
+  forged insertion, tail truncation, whole-ledger replacement, content edits,
+  re-sealing, legacy-chain attacks, content-hash forgery — including honest
+  documentation of what only the witness layer can catch.
+
 ## [0.1.0] — 2026-06-12
 
 First proof-of-concept. Tamper-evidence for agent behaviour within a family of

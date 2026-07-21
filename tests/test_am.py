@@ -15,7 +15,7 @@ def test_record_seals_entry(tmp_path):
                   target="eval.py", content=b"print(1)")
     assert e["_type"] == "action"
     assert e["agent"] == "jebi"
-    assert len(e["seal"]) == 16
+    assert len(e["seal"]) == 64   # full digest since seal upgrade
     assert e["prev_seal"] == "GENESIS"
     assert "content_hash" in e
 
