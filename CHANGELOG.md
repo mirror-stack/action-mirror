@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.3.0] — 2026-08-14
+
+### Fixed
+- **Verdicts now reach the exit code.** Every CLI path exited 0, so
+  `am verify && …` proceeded on a tampered ledger — the 🔴 FAIL was print-only.
+  Found live, not hypothetically: a commit-binding tool trusted the exit code
+  and its own tamper demo (a byte-flipped ledger) came back green.
+  Now: `verify` / `verify-peer` / `verify-sig` exit 1 on FAIL (0 on OK/WARN);
+  `attest` exits 0 only on ATTESTED (1 on CONTENT-MISMATCH and NOT-FOUND).
+  Commands with no verdict (`record`, `history`, `witness`, `cross`, `keygen`)
+  keep exiting 0. Scripts that already parsed the output are unaffected;
+  scripts that trusted the exit code were getting a constant — any change is
+  strictly more information.
+
+### Added
+- `tests/test_cli_exit_codes.py` — subprocess-level checks that each verdict
+  maps to the documented exit code, including the exact tampered-ledger case
+  the defect shipped.
+
+---
+
 ## [0.2.0] — 2026-07-17
 
 ### Security
