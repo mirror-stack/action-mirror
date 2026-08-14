@@ -376,7 +376,9 @@ def family_verify(ledgers: dict[str, str]) -> list[Finding]:
 # ─────────────────────────────────────────────────────────────
 # Report printer (family-standard)
 # ─────────────────────────────────────────────────────────────
-def report(title: str, findings: list[Finding]) -> None:
+def report(title: str, findings: list[Finding]) -> str:
+    """Print the family-standard report; return the worst level so the CLI can
+    turn a printed 🔴 into a non-zero exit code instead of a silent 0."""
     icon = {"OK": "✅", "WARN": "⚠️ ", "FAIL": "🔴"}
     worst = "FAIL" if any(f.level == "FAIL" for f in findings) else \
             "WARN" if any(f.level == "WARN" for f in findings) else "OK"
@@ -384,12 +386,20 @@ def report(title: str, findings: list[Finding]) -> None:
     print(f"   Overall: {icon[worst]} {worst}")
     for f in findings:
         print(f"   {icon[f.level]} [{f.probe}] {f.msg}")
+    return worst
 
 
 # ─────────────────────────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────────────────────────
-def _cli() -> None:
+def _cli() -> int:
+    """Exit codes: 0 — command ran and any verdict was OK/WARN (or the command
+    has no verdict); 1 — a verdict-bearing command answered negatively
+    (chain/signature/peer FAIL, attest CONTENT-MISMATCH or NOT-FOUND).
+    Before 0.3.0 every path exited 0, so `am verify && …` shipped a tampered
+    ledger — the verdict was print-only. Found when a commit-binding tool's
+    tamper demo passed its ledger-mutation case.
+    """
     import argparse
     p = argparse.ArgumentParser(
         prog="am", description="🪪 Action Mirror — agent action provenance + mutual witness")
@@ -444,11 +454,12 @@ def _cli() -> None:
         from . import identity
         pub = identity.generate(args.out)
         print(f"🔑 keypair written: {args.out}  (keep private!)\n   pubkey: {pub}")
-        return
+        return 0
     if args.cmd == "verify-sig":
-        for f in verify_signatures(args.ledger):
+        fs = verify_signatures(args.ledger)
+        for f in fs:
             print(f"   {f}")
-        return
+        return 1 if any(f.level == "FAIL" for f in fs) else 0
     if args.cmd == "record":
         content = None
         if args.content_file:
@@ -478,20 +489,25 @@ def _cli() -> None:
         print(f"{icon[res['verdict']]} {res['verdict']}: {res['note']}")
         for e in res["matches"]:
             print(f"   {e['ts']}  {e['agent']} {e['action']} seal={e['seal']}")
+        return 0 if res["verdict"] == "ATTESTED" else 1
     elif args.cmd == "verify":
-        report("chain integrity", verify_chain(args.ledger))
+        return 1 if report("chain integrity",
+                           verify_chain(args.ledger)) == "FAIL" else 0
     elif args.cmd == "witness":
         e = witness_peer(args.ledger, args.peer_ledger, peer_name=args.name)
         print(f"👁 Witnessed '{args.name}': {e['peer_entries']} entries, "
               f"head={e['peer_head_seal']}  seal={e['seal']}")
     elif args.cmd == "verify-peer":
-        report(f"peer '{args.name}'",
-               [verify_peer(args.ledger, args.peer_ledger, peer_name=args.name)])
+        worst = report(f"peer '{args.name}'",
+                       [verify_peer(args.ledger, args.peer_ledger,
+                                    peer_name=args.name)])
+        return 1 if worst == "FAIL" else 0
     elif args.cmd == "cross":
         na, nb = args.names
         cross_witness(args.ledger_a, args.ledger_b, name_a=na, name_b=nb)
         print(f"👁👁 Mutual witness sealed: {na} ⇄ {nb}")
+    return 0
 
 
 if __name__ == "__main__":
-    _cli()
+    raise SystemExit(_cli())
