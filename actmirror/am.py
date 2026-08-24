@@ -84,8 +84,9 @@ def _get_last_seal(ledger_path: str, _chunk: int = 8192) -> str:
     only the amount of it we read changes.
 
     Semantics are unchanged, including the awkward cases: unsealed or unparseable
-    trailing lines are skipped (as _load_entries' {_corrupt} placeholders were), and
-    a ledger with no sealed entry at all still answers GENESIS.
+    trailing lines are skipped (as _load_entries' {_corrupt} placeholders were), a
+    ledger with no sealed entry at all still answers GENESIS, and CRLF / CR / LF
+    endings all read the same — text mode used to normalise those for us.
     """
     if not os.path.exists(ledger_path):
         return "GENESIS"
@@ -98,7 +99,12 @@ def _get_last_seal(ledger_path: str, _chunk: int = 8192) -> str:
             pos -= step
             f.seek(pos)
             buf = f.read(step) + buf
-            parts = buf.split(b"\n")
+            # Split on every line ending, not just \n. Reading bytes means universal-newline
+            # translation no longer happens for us: a ledger written with CR-only endings
+            # parsed as ONE line and the lookup answered GENESIS — which would have appended
+            # a second genesis entry into the middle of a live chain. Normalising first is
+            # safe because a raw CR or LF inside a JSON string is not valid JSON anyway.
+            parts = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
             # parts[0] may be the tail of a line that starts earlier in the file —
             # only safe to read once we have reached the beginning.
             head, complete = parts[0], parts[1:]

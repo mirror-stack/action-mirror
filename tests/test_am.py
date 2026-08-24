@@ -300,7 +300,10 @@ def _awkward_ledgers(tmp_path):
         nonlocal i
         i += 1
         p = tmp_path / f"c{i}.jsonl"
-        p.write_text(text, encoding="utf-8")
+        # newline="" so the bytes on disk are exactly what this test wrote — otherwise
+        # Windows silently rewrites every \n as \r\n and the line-ending cases below
+        # stop testing what they name.
+        p.write_text(text, encoding="utf-8", newline="")
         cases.append((label, str(p)))
     mk("empty", "")
     mk("blank lines only", "\n\n\n")
@@ -317,6 +320,13 @@ def _awkward_ledgers(tmp_path):
                                              "seal": "22" * 32}) + '\n{"note": "tail"}\n')
     mk("many unsealed lines after the last seal",
        S("33" * 32) + "\n" + ('{"note": "%s"}\n' % ("y" * 300)) * 100)
+    # Line endings: reading bytes means universal-newline translation is ours to do.
+    # A CR-only ledger used to parse as ONE line and answer GENESIS — an append would
+    # then have written a second genesis entry into the middle of a live chain.
+    three = [S("55" * 32), S("66" * 32), S("77" * 32)]
+    mk("CRLF endings", "\r\n".join(three) + "\r\n")
+    mk("CR-only endings", "\r".join(three) + "\r")
+    mk("mixed endings", three[0] + "\r\n" + three[1] + "\r" + three[2] + "\n")
     cases.append(("missing file", str(tmp_path / "does_not_exist.jsonl")))
     return cases
 
@@ -324,7 +334,7 @@ def _awkward_ledgers(tmp_path):
 def test_last_seal_matches_full_parse(tmp_path):
     """The fast tail read answers exactly what parsing the whole ledger answers."""
     cases = _awkward_ledgers(tmp_path)
-    assert len(cases) >= 12, "the case list itself must not silently shrink to nothing"
+    assert len(cases) >= 15, "the case list itself must not silently shrink to nothing"
     for label, path in cases:
         assert am._get_last_seal(path) == _reference_last_seal(path), label
 
