@@ -176,3 +176,27 @@ def test_output_is_readable_by_a_caller_using_the_same_encoding(tmp_path):
                         read_as="cp1252")
     assert r.stdout is not None
     assert r.returncode == 1 and "FAIL" in r.stdout, "the verdict must survive the round trip"
+
+
+def test_the_shipped_example_runs_on_a_non_utf8_console():
+    """CI's dogfood step, brought inside the pytest denominator.
+
+    The console fix lived in `_cli()`, and `examples/demo_family.py` does not go through
+    `_cli()` — it prints the same emoji directly, so it kept dying on cp1252 while the
+    test suite was fully green. `57/57` was a pytest denominator; CI green's denominator
+    is pytest + dogfood + package, and only the first one was being reported.
+
+    An example is the first code a new user runs. Failing there is worse than failing
+    in a test, and it had nothing to do with any recent change — it was always broken
+    on that platform, with no runner that could see it.
+    """
+    example = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(am.__file__))),
+        "examples", "demo_family.py")
+    if not os.path.exists(example):          # installed-wheel run: examples are not shipped
+        import pytest
+        pytest.skip("examples/ not present in this layout")
+    r = subprocess.run([sys.executable, example], capture_output=True,
+                       encoding="cp1252", env={**_ENV, "PYTHONIOENCODING": "cp1252"})
+    assert "UnicodeEncodeError" not in (r.stderr or ""), r.stderr[-400:]
+    assert r.returncode == 0, f"the shipped example died: {(r.stderr or '')[-400:]}"

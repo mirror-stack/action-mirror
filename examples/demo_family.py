@@ -18,6 +18,13 @@ import tempfile
 
 from actmirror import am
 
+# This script prints the same emoji the CLI does, but it does not go through `_cli()`,
+# so it did not inherit the console fallback that lives there — and on a cp1252 console
+# it died with UnicodeEncodeError. An example is the FIRST code a new user runs; failing
+# here is worse than failing in a test. Private import on purpose: this is the package's
+# own example, and the helper is not part of the public API.
+am._printable_streams()
+
 D = tempfile.mkdtemp(prefix="am_demo_")
 ledgers = {n: os.path.join(D, f"{n}.jsonl") for n in ["seara", "jebi", "sonnet"]}
 

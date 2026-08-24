@@ -45,7 +45,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - **`windows-latest` in the CI matrix** (3 jobs → 6). This package reads and writes
   ledger files; a Linux-only matrix could not show either defect above. It found the
-  emoji crash on its first run. A tamper-evidence tool cannot have an unmeasured OS.
+  emoji crash on its first run — in the CLI *and*, one round later, in the shipped
+  example, which prints the same glyphs without going through `_cli()` and so never
+  inherited the fallback. A tamper-evidence tool cannot have an unmeasured OS.
+- A pytest check that runs `examples/demo_family.py` on a cp1252 console. The CI dogfood
+  step already covered it, but only on the Windows runner and outside the number the
+  test suite reports: `57/57` was a pytest denominator while CI green's denominator is
+  pytest + dogfood + package.
 - Seal-lookup equivalence tests over 15 awkward ledgers (empty, no trailing newline,
   unsealed tail, corrupt lines, a line longer than the read chunk, non-ASCII, CRLF /
   CR / mixed endings, missing file), each compared against a full-parse oracle — plus a
