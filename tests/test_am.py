@@ -259,3 +259,172 @@ def test_verify_signatures_signed_and_forgery(tmp_path):
     rows[0]["agent"] = "mallory"
     open(l, "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
     assert am.verify_signatures(l)[0].level == "FAIL"
+
+
+# ─── H. last-seal lookup: O(1) tail read, unchanged answer ───────────────
+#
+# `_get_last_seal` runs on every append. It used to parse the whole ledger to
+# find its last line, so append was O(n) and a ledger got slower purely by being
+# used (on a 3,097-entry family ledger one lookup cost ~50 ms). It now reads
+# backwards from EOF. These tests pin the part that must NOT change — the answer —
+# and the part that must — how much of the file is touched.
+
+def _reference_last_seal(path):
+    """The pre-fix implementation, kept as the oracle: parse everything, scan back."""
+    import os
+    if not os.path.exists(path):
+        return "GENESIS"
+    entries = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                entries.append({"_corrupt": line[:80]})
+    for e in reversed(entries):
+        if isinstance(e, dict) and "seal" in e:
+            return e["seal"]
+    return "GENESIS"
+
+
+def _awkward_ledgers(tmp_path):
+    """The shapes a tail reader can get wrong. Returns [(label, path)]."""
+    def S(h):
+        return json.dumps({"_type": "action", "agent": "t", "action": "a",
+                           "prev_seal": "GENESIS", "seal": h}, ensure_ascii=False)
+    cases, i = [], 0
+    def mk(label, text):
+        nonlocal i
+        i += 1
+        p = tmp_path / f"c{i}.jsonl"
+        p.write_text(text, encoding="utf-8")
+        cases.append((label, str(p)))
+    mk("empty", "")
+    mk("blank lines only", "\n\n\n")
+    mk("single entry", S("aa" * 32) + "\n")
+    mk("no trailing newline", S("bb" * 32))
+    mk("no sealed entry at all", '{"ts": 1, "note": "tick"}\n' * 5)
+    mk("unsealed trailing lines", S("cc" * 32) + "\n" + '{"note": "no seal"}\n' * 3)
+    mk("corrupt last line", S("dd" * 32) + "\n{ this is not json\n")
+    mk("corrupt middle line", S("ee" * 32) + "\n@@@\n" + S("ff" * 32) + "\n")
+    mk("non-ascii payload", json.dumps({"agent": "대장님", "action": "🪞",
+                                        "seal": "11" * 32}, ensure_ascii=False) + "\n")
+    # one line longer than the read chunk, so the tail scan must span chunks
+    mk("line longer than chunk", json.dumps({"agent": "t", "action": "x" * 20000,
+                                             "seal": "22" * 32}) + '\n{"note": "tail"}\n')
+    mk("many unsealed lines after the last seal",
+       S("33" * 32) + "\n" + ('{"note": "%s"}\n' % ("y" * 300)) * 100)
+    cases.append(("missing file", str(tmp_path / "does_not_exist.jsonl")))
+    return cases
+
+
+def test_last_seal_matches_full_parse(tmp_path):
+    """The fast tail read answers exactly what parsing the whole ledger answers."""
+    cases = _awkward_ledgers(tmp_path)
+    assert len(cases) >= 12, "the case list itself must not silently shrink to nothing"
+    for label, path in cases:
+        assert am._get_last_seal(path) == _reference_last_seal(path), label
+
+
+def test_last_seal_oracle_rejects_a_wrong_implementation(tmp_path):
+    """Positive control: the comparison above must be able to FAIL.
+
+    A test that only ever runs the correct implementation cannot tell "equivalent"
+    from "not measuring anything". So run a deliberately wrong reader — one that
+    looks only at the final line — through the same cases and require it to be caught.
+    """
+    def wrong(path):
+        import os
+        if not os.path.exists(path):
+            return "GENESIS"
+        lines = [x for x in open(path, encoding="utf-8").read().splitlines() if x.strip()]
+        if not lines:
+            return "GENESIS"
+        try:
+            e = json.loads(lines[-1])
+        except json.JSONDecodeError:
+            return "GENESIS"
+        return e["seal"] if isinstance(e, dict) and "seal" in e else "GENESIS"
+
+    caught = [label for label, path in _awkward_ledgers(tmp_path)
+              if wrong(path) != _reference_last_seal(path)]
+    assert caught, "the equivalence check passed a knowingly broken reader — it measures nothing"
+
+
+class _CountingFile:
+    """A file handle that reports how many bytes it actually handed out.
+
+    It has to count line iteration too, not just read(): the implementation this
+    test replaced walked the ledger with `for line in f`, so a counter that only
+    wrapped read() would have recorded zero bytes for it and passed. That is the
+    vacuous-pass shape this repo keeps finding — the test would have measured nothing.
+    """
+
+    def __init__(self, fh, sink):
+        self._fh, self._sink = fh, sink
+
+    def _count(self, data):
+        if data:
+            self._sink.append(len(data))
+        return data
+
+    def read(self, *a, **kw):
+        return self._count(self._fh.read(*a, **kw))
+
+    def readline(self, *a, **kw):
+        return self._count(self._fh.readline(*a, **kw))
+
+    def readlines(self, *a, **kw):
+        out = self._fh.readlines(*a, **kw)
+        for line in out:
+            self._count(line)
+        return out
+
+    def __iter__(self):
+        for line in self._fh:
+            yield self._count(line)
+
+    def __enter__(self):
+        self._fh.__enter__()
+        return self
+
+    def __exit__(self, *a):
+        return self._fh.__exit__(*a)
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
+def test_append_reads_only_the_tail(tmp_path, monkeypatch):
+    """Looking up the previous seal must not read the whole ledger.
+
+    Measured structurally (bytes the file handle handed out), not by wall-clock,
+    so it cannot go green on a fast machine or flake on a loaded one.
+    """
+    l = L(tmp_path)
+    big = json.dumps({"agent": "t", "action": "p" * 50000, "seal": "44" * 32})
+    with open(l, "w", encoding="utf-8") as f:
+        for _ in range(40):                       # ~2 MB of ledger
+            f.write(big + "\n")
+    size = (tmp_path / "l.jsonl").stat().st_size
+    assert size > 1_000_000
+
+    real_open, read_sizes = open, []
+
+    def counting_open(file, *a, **kw):
+        fh = real_open(file, *a, **kw)
+        return _CountingFile(fh, read_sizes) if str(file) == l else fh
+
+    monkeypatch.setattr("builtins.open", counting_open)
+    try:
+        seal = am._get_last_seal(l)
+    finally:
+        monkeypatch.undo()
+
+    assert seal == "44" * 32
+    assert read_sizes, "nothing was read at all — the counter is not wired to the lookup"
+    assert sum(read_sizes) < size // 10, (
+        f"read {sum(read_sizes)} of {size} bytes — the lookup is still scanning the ledger")

@@ -70,12 +70,61 @@ def _load_entries(ledger_path: str) -> list[dict]:
     return out
 
 
-def _get_last_seal(ledger_path: str) -> str:
-    entries = _load_entries(ledger_path)
-    for e in reversed(entries):
-        if "seal" in e:
-            return e["seal"]
+def _get_last_seal(ledger_path: str, _chunk: int = 8192) -> str:
+    """The seal of the last sealed entry — read from the END of the file.
+
+    This runs on EVERY append. Parsing the whole ledger to find its last line made
+    append O(n): on the family ledger (3,097 entries / 3.4 MB) one `record` spent
+    50 ms here, and the cost grows with every entry ever written — the ledger gets
+    slower precisely because it is being used.
+
+    Deliberately NOT cached in memory: this ledger is appended by other processes
+    (cron jobs, sibling agents), and a cached head would hand out a prev_seal that
+    is no longer last, forking the chain. The file stays the single source of truth;
+    only the amount of it we read changes.
+
+    Semantics are unchanged, including the awkward cases: unsealed or unparseable
+    trailing lines are skipped (as _load_entries' {_corrupt} placeholders were), and
+    a ledger with no sealed entry at all still answers GENESIS.
+    """
+    if not os.path.exists(ledger_path):
+        return "GENESIS"
+    with open(ledger_path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        buf = b""
+        while pos > 0:
+            step = min(_chunk, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + buf
+            parts = buf.split(b"\n")
+            # parts[0] may be the tail of a line that starts earlier in the file —
+            # only safe to read once we have reached the beginning.
+            head, complete = parts[0], parts[1:]
+            for line in reversed(complete):
+                seal = _seal_of(line)
+                if seal is not None:
+                    return seal
+            if pos == 0:
+                seal = _seal_of(head)
+                if seal is not None:
+                    return seal
+                break
+            buf = head
     return "GENESIS"
+
+
+def _seal_of(raw: bytes):
+    """`seal` of one raw ledger line, or None if it has none / does not parse."""
+    line = raw.strip()
+    if not line:
+        return None
+    try:
+        entry = json.loads(line.decode("utf-8"))
+    except Exception:
+        return None
+    return entry["seal"] if isinstance(entry, dict) and "seal" in entry else None
 
 
 def _seal(ledger_path: str, entry: dict, sign_key: str | None = None) -> dict:
