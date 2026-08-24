@@ -93,3 +93,51 @@ def test_record_still_exits_0(tmp_path):
     led = str(tmp_path / "l.jsonl")
     r = cli("--ledger", led, "record", "--agent", "a", "--action", "x")
     assert r.returncode == 0 and "Sealed" in r.stdout
+
+
+# ─── the verdict has to survive the console it is printed to ────────────
+#
+# Every verdict line starts with an emoji (🪪 ✅ 🔴 ⚪). On a console whose encoding
+# cannot represent them, `print` raised UnicodeEncodeError — so on Windows, whose
+# default is cp1252, `am verify` on an INTACT ledger died with a traceback, an empty
+# stdout and exit 1. Indistinguishable from a tamper verdict.
+#
+# Worse for `record`: the entry is written BEFORE the confirmation is printed, so the
+# action was sealed and the CLI still reported failure. A caller that retries on a
+# non-zero exit records it twice.
+#
+# Driven by PYTHONIOENCODING rather than by the OS, so this runs everywhere — a guard
+# that only fires on one runner is a guard most runs never execute.
+
+def cli_in_encoding(encoding, *args):
+    env = {**_ENV, "PYTHONIOENCODING": encoding}
+    return subprocess.run([sys.executable, "-m", "actmirror.am", *args],
+                          capture_output=True, text=True, env=env)
+
+
+def test_verify_survives_a_non_utf8_console(tmp_path):
+    led = str(tmp_path / "l.jsonl")
+    am.record(led, agent="a", action="x")
+    r = cli_in_encoding("cp1252", "--ledger", led, "verify")
+    assert "UnicodeEncodeError" not in r.stderr, "the verdict crashed on the console encoding"
+    assert r.returncode == 0, f"an intact chain must not exit non-zero: {r.stderr[-300:]}"
+    assert "OK" in r.stdout, "the verdict text itself must survive, emoji or not"
+
+
+def test_record_survives_a_non_utf8_console(tmp_path):
+    """A sealed entry that reports failure is worse than a failure: retries duplicate it."""
+    led = str(tmp_path / "l.jsonl")
+    r = cli_in_encoding("cp1252", "--ledger", led, "record", "--agent", "a", "--action", "x")
+    assert r.returncode == 0, f"record exited {r.returncode}: {r.stderr[-300:]}"
+    assert "seal=" in r.stdout
+    assert len([x for x in open(led, encoding="utf-8") if x.strip()]) == 1
+
+
+def test_tamper_verdict_still_reaches_the_exit_code_in_that_console(tmp_path):
+    """The fix must not turn every run green — a FAIL still has to be a FAIL."""
+    led = str(tmp_path / "l.jsonl")
+    am.record(led, agent="a", action="x")
+    _tamper_field(led, "agent", "mallory")
+    r = cli_in_encoding("cp1252", "--ledger", led, "verify")
+    assert r.returncode == 1
+    assert "FAIL" in r.stdout

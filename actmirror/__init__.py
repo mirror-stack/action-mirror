@@ -10,4 +10,4 @@ __all__ = [
     "witness_peer", "verify_peer", "cross_witness", "family_round", "family_verify",
     "report", "Finding",
 ]
-__version__ = "0.3.0"
+__version__ = "0.4.0"

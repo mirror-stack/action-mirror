@@ -5,6 +5,56 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.4.0] — 2026-08-25
+
+### Changed
+- **Appending no longer re-reads the whole ledger.** `_get_last_seal` runs on every
+  `record()` and parsed every line to find the last one, so append was O(n) — the
+  ledger got slower purely by being used, which taxes the discipline it exists to
+  support. On a 3,097-entry / 3.4 MB ledger one lookup cost **50.390 ms**; it now
+  costs **0.048 ms** and stays flat (append median over a growing ledger: 8.17× → 0.96×).
+
+  Not cached in memory on purpose: other processes append to the same ledger, and a
+  cached head that is no longer last would write a `prev_seal` that forks the chain.
+  The file stays the single source of truth; only how much of it is read changed.
+
+### Fixed
+- **CR-only line endings answered GENESIS.** Reading bytes meant losing text mode's
+  universal-newline translation, so a ledger with `\r` endings parsed as one line and
+  the lookup reported an empty chain — an append would then have written a second
+  genesis entry into the middle of a live chain. `\r\n`, `\r` and `\n` now all read
+  the same. Caught by a reviewer who noted the diff was file I/O in a repo with no
+  Windows CI, not by the tests as first written.
+
+- **The CLI died on consoles that cannot print emoji.** Every verdict line starts with
+  🪪 / ✅ / 🔴 / ⚪, and on a cp1252 console `print` raised `UnicodeEncodeError`. So on
+  Windows `am verify` on an **intact** ledger exited 1 with an empty stdout —
+  indistinguishable from a tamper verdict, and the 0.3.0 promise that "verdicts reach
+  the exit code" was false there. Worse for `record`: the entry is written *before* the
+  confirmation is printed, so the action was sealed and the CLI still reported failure —
+  a caller retrying on non-zero would record it twice.
+
+  stdout/stderr are now reconfigured to UTF-8 with `errors="replace"`, so an old console
+  degrades to `?` instead of losing the verdict. A verdict that cannot be printed is a
+  verdict that did not reach anyone.
+
+### Added
+- **`windows-latest` in the CI matrix** (3 jobs → 6). This package reads and writes
+  ledger files; a Linux-only matrix could not show either defect above. It found the
+  emoji crash on its first run. A tamper-evidence tool cannot have an unmeasured OS.
+- Seal-lookup equivalence tests over 15 awkward ledgers (empty, no trailing newline,
+  unsealed tail, corrupt lines, a line longer than the read chunk, non-ASCII, CRLF /
+  CR / mixed endings, missing file), each compared against a full-parse oracle — plus a
+  **positive control** that runs a knowingly wrong reader through the same comparison,
+  so "equivalent" cannot quietly mean "measuring nothing".
+- A tail-read check measured in **bytes handed out by the file handle**, not wall-clock.
+  Its first version counted only `read()` and so passed the old line-iterating
+  implementation unchanged — it measures the difference only after counting iteration too.
+- Console-encoding tests driven by `PYTHONIOENCODING` rather than by the OS, so they run
+  on every runner instead of only the Windows one.
+
+---
+
 ## [0.3.0] — 2026-08-14
 
 ### Fixed

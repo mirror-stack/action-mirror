@@ -35,7 +35,7 @@ Honest threat model (read this before trusting it):
 Zero dependencies (stdlib only). Deterministic. Same DNA as measure-mirror.
 """
 from __future__ import annotations
-import hashlib, json, os, time
+import hashlib, json, os, sys, time
 from dataclasses import dataclass
 
 
@@ -447,6 +447,26 @@ def report(title: str, findings: list[Finding]) -> str:
 # ─────────────────────────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────────────────────────
+def _printable_streams() -> None:
+    """Make sure a verdict can always be printed, whatever the console encoding is.
+
+    Every verdict line starts with an emoji (🪪 ✅ 🔴 ⚪). On a console whose encoding
+    cannot represent them — Windows defaults to cp1252 — `print` raised
+    UnicodeEncodeError, so `am verify` on an INTACT ledger died with a traceback,
+    an empty stdout and exit 1. Indistinguishable from a tamper verdict, and the
+    0.3.0 promise that "verdicts reach the exit code" was false on that platform.
+
+    UTF-8 where the stream can take it; `errors="replace"` so an old console
+    degrades to `?` instead of losing the verdict entirely. A verdict that cannot
+    be printed is a verdict that did not reach anyone.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:      # not a reconfigurable stream (pytest capture, pipes) — fine
+            pass
+
+
 def _cli() -> int:
     """Exit codes: 0 — command ran and any verdict was OK/WARN (or the command
     has no verdict); 1 — a verdict-bearing command answered negatively
@@ -455,6 +475,7 @@ def _cli() -> int:
     ledger — the verdict was print-only. Found when a commit-binding tool's
     tamper demo passed its ledger-mutation case.
     """
+    _printable_streams()
     import argparse
     p = argparse.ArgumentParser(
         prog="am", description="🪪 Action Mirror — agent action provenance + mutual witness")
