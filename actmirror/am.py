@@ -456,13 +456,19 @@ def _printable_streams() -> None:
     an empty stdout and exit 1. Indistinguishable from a tamper verdict, and the
     0.3.0 promise that "verdicts reach the exit code" was false on that platform.
 
-    UTF-8 where the stream can take it; `errors="replace"` so an old console
-    degrades to `?` instead of losing the verdict entirely. A verdict that cannot
-    be printed is a verdict that did not reach anyone.
+    Only the error handler changes — NOT the encoding. Forcing UTF-8 here fixed the
+    crash and moved it one process along: the child then wrote UTF-8 bytes into a pipe
+    that its Windows caller was decoding with the locale encoding, and the reader died
+    with UnicodeDecodeError instead. Whoever reads this output already knows the
+    console's encoding; what they cannot survive is a codec exception. So keep the
+    encoding they expect and let unrepresentable glyphs degrade to `?` — the verdict
+    words are ASCII and come through intact either way.
+
+    A verdict that cannot be printed is a verdict that did not reach anyone.
     """
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
+            stream.reconfigure(errors="replace")
         except Exception:      # not a reconfigurable stream (pytest capture, pipes) — fine
             pass
 

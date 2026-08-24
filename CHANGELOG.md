@@ -34,9 +34,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   confirmation is printed, so the action was sealed and the CLI still reported failure —
   a caller retrying on non-zero would record it twice.
 
-  stdout/stderr are now reconfigured to UTF-8 with `errors="replace"`, so an old console
-  degrades to `?` instead of losing the verdict. A verdict that cannot be printed is a
-  verdict that did not reach anyone.
+  stdout/stderr now get `errors="replace"` — **the error handler only, not the encoding**.
+  Forcing UTF-8 fixed the crash and moved it one process along: the child wrote UTF-8 into
+  a pipe its Windows caller was decoding as cp1252, and the reader died on byte `0x81`
+  (the 👁 in the witness line) with `stdout` coming back `None`. Keeping the console's own
+  encoding means whoever reads the output can still decode it; unrepresentable glyphs
+  degrade to `?` and the verdict words, which are ASCII, come through intact.
+  A verdict that cannot be printed is a verdict that did not reach anyone.
 
 ### Added
 - **`windows-latest` in the CI matrix** (3 jobs → 6). This package reads and writes
@@ -51,7 +55,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Its first version counted only `read()` and so passed the old line-iterating
   implementation unchanged — it measures the difference only after counting iteration too.
 - Console-encoding tests driven by `PYTHONIOENCODING` rather than by the OS, so they run
-  on every runner instead of only the Windows one.
+  on every runner instead of only the Windows one — including one that decodes the pipe
+  with the same non-UTF-8 codec the console declared, which is what the Windows harness
+  does and what the UTF-8-forcing attempt broke. A tamper verdict is checked in that
+  console too, so the fix cannot quietly turn every run green.
 
 ---
 

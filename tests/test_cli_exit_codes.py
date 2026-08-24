@@ -108,17 +108,29 @@ def test_record_still_exits_0(tmp_path):
 #
 # Driven by PYTHONIOENCODING rather than by the OS, so this runs everywhere — a guard
 # that only fires on one runner is a guard most runs never execute.
+#
+# The contract these pin down: output stays in the CONSOLE's encoding, so a caller
+# reads it back with the same codec it declared. Each test therefore decodes as cp1252
+# too — reading UTF-8 out of a cp1252 console would be the caller's own bug.
 
-def cli_in_encoding(encoding, *args):
+def cli_in_encoding(encoding, *args, read_as=None):
+    """Run the CLI with a given console encoding.
+
+    `read_as` decodes the pipe with that codec instead of the caller's default — which
+    is what a Windows caller does, and where forcing UTF-8 output moved the crash to:
+    the child wrote UTF-8 into a pipe the parent was decoding as cp1252, and the reader
+    thread died on byte 0x81 (the 👁 in the witness line) with stdout coming back None.
+    """
     env = {**_ENV, "PYTHONIOENCODING": encoding}
+    kw = {"encoding": read_as} if read_as else {"text": True}
     return subprocess.run([sys.executable, "-m", "actmirror.am", *args],
-                          capture_output=True, text=True, env=env)
+                          capture_output=True, env=env, **kw)
 
 
 def test_verify_survives_a_non_utf8_console(tmp_path):
     led = str(tmp_path / "l.jsonl")
     am.record(led, agent="a", action="x")
-    r = cli_in_encoding("cp1252", "--ledger", led, "verify")
+    r = cli_in_encoding("cp1252", "--ledger", led, "verify", read_as="cp1252")
     assert "UnicodeEncodeError" not in r.stderr, "the verdict crashed on the console encoding"
     assert r.returncode == 0, f"an intact chain must not exit non-zero: {r.stderr[-300:]}"
     assert "OK" in r.stdout, "the verdict text itself must survive, emoji or not"
@@ -127,7 +139,8 @@ def test_verify_survives_a_non_utf8_console(tmp_path):
 def test_record_survives_a_non_utf8_console(tmp_path):
     """A sealed entry that reports failure is worse than a failure: retries duplicate it."""
     led = str(tmp_path / "l.jsonl")
-    r = cli_in_encoding("cp1252", "--ledger", led, "record", "--agent", "a", "--action", "x")
+    r = cli_in_encoding("cp1252", "--ledger", led, "record", "--agent", "a", "--action", "x",
+                        read_as="cp1252")
     assert r.returncode == 0, f"record exited {r.returncode}: {r.stderr[-300:]}"
     assert "seal=" in r.stdout
     assert len([x for x in open(led, encoding="utf-8") if x.strip()]) == 1
@@ -138,6 +151,28 @@ def test_tamper_verdict_still_reaches_the_exit_code_in_that_console(tmp_path):
     led = str(tmp_path / "l.jsonl")
     am.record(led, agent="a", action="x")
     _tamper_field(led, "agent", "mallory")
-    r = cli_in_encoding("cp1252", "--ledger", led, "verify")
+    r = cli_in_encoding("cp1252", "--ledger", led, "verify", read_as="cp1252")
     assert r.returncode == 1
     assert "FAIL" in r.stdout
+
+
+def test_output_is_readable_by_a_caller_using_the_same_encoding(tmp_path):
+    """The bytes must stay in the console's own encoding, not silently become UTF-8.
+
+    Reproduces the Windows harness on any platform: child console cp1252, caller
+    decoding cp1252. Forcing UTF-8 output made this raise UnicodeDecodeError on
+    byte 0x81 — the fix has to keep the encoding and only replace what it cannot map.
+    """
+    mine, peer = str(tmp_path / "mine.jsonl"), str(tmp_path / "peer.jsonl")
+    am.record(peer, agent="peer", action="x")
+    r = cli_in_encoding("cp1252", "--ledger", mine, "witness", peer, "--name", "peer",
+                        read_as="cp1252")          # 👁 lives on this path
+    assert r.stdout is not None, "the caller could not decode the output at all"
+    assert r.returncode == 0 and "Witnessed" in r.stdout
+
+    os.remove(peer)                                # peer rewrites history from scratch
+    am.record(peer, agent="peer", action="rewritten")
+    r = cli_in_encoding("cp1252", "--ledger", mine, "verify-peer", peer, "--name", "peer",
+                        read_as="cp1252")
+    assert r.stdout is not None
+    assert r.returncode == 1 and "FAIL" in r.stdout, "the verdict must survive the round trip"
