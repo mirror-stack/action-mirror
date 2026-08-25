@@ -35,7 +35,7 @@ Honest threat model (read this before trusting it):
 Zero dependencies (stdlib only). Deterministic. Same DNA as measure-mirror.
 """
 from __future__ import annotations
-import hashlib, json, os, time
+import hashlib, json, os, sys, time
 from dataclasses import dataclass
 
 
@@ -70,12 +70,67 @@ def _load_entries(ledger_path: str) -> list[dict]:
     return out
 
 
-def _get_last_seal(ledger_path: str) -> str:
-    entries = _load_entries(ledger_path)
-    for e in reversed(entries):
-        if "seal" in e:
-            return e["seal"]
+def _get_last_seal(ledger_path: str, _chunk: int = 8192) -> str:
+    """The seal of the last sealed entry — read from the END of the file.
+
+    This runs on EVERY append. Parsing the whole ledger to find its last line made
+    append O(n): on the family ledger (3,097 entries / 3.4 MB) one `record` spent
+    50 ms here, and the cost grows with every entry ever written — the ledger gets
+    slower precisely because it is being used.
+
+    Deliberately NOT cached in memory: this ledger is appended by other processes
+    (cron jobs, sibling agents), and a cached head would hand out a prev_seal that
+    is no longer last, forking the chain. The file stays the single source of truth;
+    only the amount of it we read changes.
+
+    Semantics are unchanged, including the awkward cases: unsealed or unparseable
+    trailing lines are skipped (as _load_entries' {_corrupt} placeholders were), a
+    ledger with no sealed entry at all still answers GENESIS, and CRLF / CR / LF
+    endings all read the same — text mode used to normalise those for us.
+    """
+    if not os.path.exists(ledger_path):
+        return "GENESIS"
+    with open(ledger_path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        buf = b""
+        while pos > 0:
+            step = min(_chunk, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + buf
+            # Split on every line ending, not just \n. Reading bytes means universal-newline
+            # translation no longer happens for us: a ledger written with CR-only endings
+            # parsed as ONE line and the lookup answered GENESIS — which would have appended
+            # a second genesis entry into the middle of a live chain. Normalising first is
+            # safe because a raw CR or LF inside a JSON string is not valid JSON anyway.
+            parts = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
+            # parts[0] may be the tail of a line that starts earlier in the file —
+            # only safe to read once we have reached the beginning.
+            head, complete = parts[0], parts[1:]
+            for line in reversed(complete):
+                seal = _seal_of(line)
+                if seal is not None:
+                    return seal
+            if pos == 0:
+                seal = _seal_of(head)
+                if seal is not None:
+                    return seal
+                break
+            buf = head
     return "GENESIS"
+
+
+def _seal_of(raw: bytes):
+    """`seal` of one raw ledger line, or None if it has none / does not parse."""
+    line = raw.strip()
+    if not line:
+        return None
+    try:
+        entry = json.loads(line.decode("utf-8"))
+    except Exception:
+        return None
+    return entry["seal"] if isinstance(entry, dict) and "seal" in entry else None
 
 
 def _seal(ledger_path: str, entry: dict, sign_key: str | None = None) -> dict:
@@ -392,6 +447,32 @@ def report(title: str, findings: list[Finding]) -> str:
 # ─────────────────────────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────────────────────────
+def _printable_streams() -> None:
+    """Make sure a verdict can always be printed, whatever the console encoding is.
+
+    Every verdict line starts with an emoji (🪪 ✅ 🔴 ⚪). On a console whose encoding
+    cannot represent them — Windows defaults to cp1252 — `print` raised
+    UnicodeEncodeError, so `am verify` on an INTACT ledger died with a traceback,
+    an empty stdout and exit 1. Indistinguishable from a tamper verdict, and the
+    0.3.0 promise that "verdicts reach the exit code" was false on that platform.
+
+    Only the error handler changes — NOT the encoding. Forcing UTF-8 here fixed the
+    crash and moved it one process along: the child then wrote UTF-8 bytes into a pipe
+    that its Windows caller was decoding with the locale encoding, and the reader died
+    with UnicodeDecodeError instead. Whoever reads this output already knows the
+    console's encoding; what they cannot survive is a codec exception. So keep the
+    encoding they expect and let unrepresentable glyphs degrade to `?` — the verdict
+    words are ASCII and come through intact either way.
+
+    A verdict that cannot be printed is a verdict that did not reach anyone.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except Exception:      # not a reconfigurable stream (pytest capture, pipes) — fine
+            pass
+
+
 def _cli() -> int:
     """Exit codes: 0 — command ran and any verdict was OK/WARN (or the command
     has no verdict); 1 — a verdict-bearing command answered negatively
@@ -400,6 +481,7 @@ def _cli() -> int:
     ledger — the verdict was print-only. Found when a commit-binding tool's
     tamper demo passed its ledger-mutation case.
     """
+    _printable_streams()
     import argparse
     p = argparse.ArgumentParser(
         prog="am", description="🪪 Action Mirror — agent action provenance + mutual witness")

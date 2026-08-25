@@ -7,9 +7,17 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Windows is in the matrix because this package READS AND WRITES LEDGER FILES.
+    # The seal-lookup reads bytes and splits lines itself, so universal-newline
+    # translation no longer happens for it — a CR-only ledger parsed as one line
+    # and the lookup answered GENESIS, which on append would have written a second
+    # genesis entry into the middle of a live chain. Nothing in a Linux-only matrix
+    # could have shown that. A tamper-evidence tool cannot have an unmeasured OS.
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4

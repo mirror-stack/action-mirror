@@ -5,6 +5,69 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.4.0] — 2026-08-25
+
+### Changed
+- **Appending no longer re-reads the whole ledger.** `_get_last_seal` runs on every
+  `record()` and parsed every line to find the last one, so append was O(n) — the
+  ledger got slower purely by being used, which taxes the discipline it exists to
+  support. On a 3,097-entry / 3.4 MB ledger one lookup cost **50.390 ms**; it now
+  costs **0.048 ms** and stays flat (append median over a growing ledger: 8.17× → 0.96×).
+
+  Not cached in memory on purpose: other processes append to the same ledger, and a
+  cached head that is no longer last would write a `prev_seal` that forks the chain.
+  The file stays the single source of truth; only how much of it is read changed.
+
+### Fixed
+- **CR-only line endings answered GENESIS.** Reading bytes meant losing text mode's
+  universal-newline translation, so a ledger with `\r` endings parsed as one line and
+  the lookup reported an empty chain — an append would then have written a second
+  genesis entry into the middle of a live chain. `\r\n`, `\r` and `\n` now all read
+  the same. Caught by a reviewer who noted the diff was file I/O in a repo with no
+  Windows CI, not by the tests as first written.
+
+- **The CLI died on consoles that cannot print emoji.** Every verdict line starts with
+  🪪 / ✅ / 🔴 / ⚪, and on a cp1252 console `print` raised `UnicodeEncodeError`. So on
+  Windows `am verify` on an **intact** ledger exited 1 with an empty stdout —
+  indistinguishable from a tamper verdict, and the 0.3.0 promise that "verdicts reach
+  the exit code" was false there. Worse for `record`: the entry is written *before* the
+  confirmation is printed, so the action was sealed and the CLI still reported failure —
+  a caller retrying on non-zero would record it twice.
+
+  stdout/stderr now get `errors="replace"` — **the error handler only, not the encoding**.
+  Forcing UTF-8 fixed the crash and moved it one process along: the child wrote UTF-8 into
+  a pipe its Windows caller was decoding as cp1252, and the reader died on byte `0x81`
+  (the 👁 in the witness line) with `stdout` coming back `None`. Keeping the console's own
+  encoding means whoever reads the output can still decode it; unrepresentable glyphs
+  degrade to `?` and the verdict words, which are ASCII, come through intact.
+  A verdict that cannot be printed is a verdict that did not reach anyone.
+
+### Added
+- **`windows-latest` in the CI matrix** (3 jobs → 6). This package reads and writes
+  ledger files; a Linux-only matrix could not show either defect above. It found the
+  emoji crash on its first run — in the CLI *and*, one round later, in the shipped
+  example, which prints the same glyphs without going through `_cli()` and so never
+  inherited the fallback. A tamper-evidence tool cannot have an unmeasured OS.
+- A pytest check that runs `examples/demo_family.py` on a cp1252 console. The CI dogfood
+  step already covered it, but only on the Windows runner and outside the number the
+  test suite reports: `57/57` was a pytest denominator while CI green's denominator is
+  pytest + dogfood + package.
+- Seal-lookup equivalence tests over 15 awkward ledgers (empty, no trailing newline,
+  unsealed tail, corrupt lines, a line longer than the read chunk, non-ASCII, CRLF /
+  CR / mixed endings, missing file), each compared against a full-parse oracle — plus a
+  **positive control** that runs a knowingly wrong reader through the same comparison,
+  so "equivalent" cannot quietly mean "measuring nothing".
+- A tail-read check measured in **bytes handed out by the file handle**, not wall-clock.
+  Its first version counted only `read()` and so passed the old line-iterating
+  implementation unchanged — it measures the difference only after counting iteration too.
+- Console-encoding tests driven by `PYTHONIOENCODING` rather than by the OS, so they run
+  on every runner instead of only the Windows one — including one that decodes the pipe
+  with the same non-UTF-8 codec the console declared, which is what the Windows harness
+  does and what the UTF-8-forcing attempt broke. A tamper verdict is checked in that
+  console too, so the fix cannot quietly turn every run green.
+
+---
+
 ## [0.3.0] — 2026-08-14
 
 ### Fixed

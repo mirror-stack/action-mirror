@@ -93,3 +93,110 @@ def test_record_still_exits_0(tmp_path):
     led = str(tmp_path / "l.jsonl")
     r = cli("--ledger", led, "record", "--agent", "a", "--action", "x")
     assert r.returncode == 0 and "Sealed" in r.stdout
+
+
+# ─── the verdict has to survive the console it is printed to ────────────
+#
+# Every verdict line starts with an emoji (🪪 ✅ 🔴 ⚪). On a console whose encoding
+# cannot represent them, `print` raised UnicodeEncodeError — so on Windows, whose
+# default is cp1252, `am verify` on an INTACT ledger died with a traceback, an empty
+# stdout and exit 1. Indistinguishable from a tamper verdict.
+#
+# Worse for `record`: the entry is written BEFORE the confirmation is printed, so the
+# action was sealed and the CLI still reported failure. A caller that retries on a
+# non-zero exit records it twice.
+#
+# Driven by PYTHONIOENCODING rather than by the OS, so this runs everywhere — a guard
+# that only fires on one runner is a guard most runs never execute.
+#
+# The contract these pin down: output stays in the CONSOLE's encoding, so a caller
+# reads it back with the same codec it declared. Each test therefore decodes as cp1252
+# too — reading UTF-8 out of a cp1252 console would be the caller's own bug.
+
+def cli_in_encoding(encoding, *args, read_as=None):
+    """Run the CLI with a given console encoding.
+
+    `read_as` decodes the pipe with that codec instead of the caller's default — which
+    is what a Windows caller does, and where forcing UTF-8 output moved the crash to:
+    the child wrote UTF-8 into a pipe the parent was decoding as cp1252, and the reader
+    thread died on byte 0x81 (the 👁 in the witness line) with stdout coming back None.
+    """
+    env = {**_ENV, "PYTHONIOENCODING": encoding}
+    kw = {"encoding": read_as} if read_as else {"text": True}
+    return subprocess.run([sys.executable, "-m", "actmirror.am", *args],
+                          capture_output=True, env=env, **kw)
+
+
+def test_verify_survives_a_non_utf8_console(tmp_path):
+    led = str(tmp_path / "l.jsonl")
+    am.record(led, agent="a", action="x")
+    r = cli_in_encoding("cp1252", "--ledger", led, "verify", read_as="cp1252")
+    assert "UnicodeEncodeError" not in r.stderr, "the verdict crashed on the console encoding"
+    assert r.returncode == 0, f"an intact chain must not exit non-zero: {r.stderr[-300:]}"
+    assert "OK" in r.stdout, "the verdict text itself must survive, emoji or not"
+
+
+def test_record_survives_a_non_utf8_console(tmp_path):
+    """A sealed entry that reports failure is worse than a failure: retries duplicate it."""
+    led = str(tmp_path / "l.jsonl")
+    r = cli_in_encoding("cp1252", "--ledger", led, "record", "--agent", "a", "--action", "x",
+                        read_as="cp1252")
+    assert r.returncode == 0, f"record exited {r.returncode}: {r.stderr[-300:]}"
+    assert "seal=" in r.stdout
+    assert len([x for x in open(led, encoding="utf-8") if x.strip()]) == 1
+
+
+def test_tamper_verdict_still_reaches_the_exit_code_in_that_console(tmp_path):
+    """The fix must not turn every run green — a FAIL still has to be a FAIL."""
+    led = str(tmp_path / "l.jsonl")
+    am.record(led, agent="a", action="x")
+    _tamper_field(led, "agent", "mallory")
+    r = cli_in_encoding("cp1252", "--ledger", led, "verify", read_as="cp1252")
+    assert r.returncode == 1
+    assert "FAIL" in r.stdout
+
+
+def test_output_is_readable_by_a_caller_using_the_same_encoding(tmp_path):
+    """The bytes must stay in the console's own encoding, not silently become UTF-8.
+
+    Reproduces the Windows harness on any platform: child console cp1252, caller
+    decoding cp1252. Forcing UTF-8 output made this raise UnicodeDecodeError on
+    byte 0x81 — the fix has to keep the encoding and only replace what it cannot map.
+    """
+    mine, peer = str(tmp_path / "mine.jsonl"), str(tmp_path / "peer.jsonl")
+    am.record(peer, agent="peer", action="x")
+    r = cli_in_encoding("cp1252", "--ledger", mine, "witness", peer, "--name", "peer",
+                        read_as="cp1252")          # 👁 lives on this path
+    assert r.stdout is not None, "the caller could not decode the output at all"
+    assert r.returncode == 0 and "Witnessed" in r.stdout
+
+    os.remove(peer)                                # peer rewrites history from scratch
+    am.record(peer, agent="peer", action="rewritten")
+    r = cli_in_encoding("cp1252", "--ledger", mine, "verify-peer", peer, "--name", "peer",
+                        read_as="cp1252")
+    assert r.stdout is not None
+    assert r.returncode == 1 and "FAIL" in r.stdout, "the verdict must survive the round trip"
+
+
+def test_the_shipped_example_runs_on_a_non_utf8_console():
+    """CI's dogfood step, brought inside the pytest denominator.
+
+    The console fix lived in `_cli()`, and `examples/demo_family.py` does not go through
+    `_cli()` — it prints the same emoji directly, so it kept dying on cp1252 while the
+    test suite was fully green. `57/57` was a pytest denominator; CI green's denominator
+    is pytest + dogfood + package, and only the first one was being reported.
+
+    An example is the first code a new user runs. Failing there is worse than failing
+    in a test, and it had nothing to do with any recent change — it was always broken
+    on that platform, with no runner that could see it.
+    """
+    example = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(am.__file__))),
+        "examples", "demo_family.py")
+    if not os.path.exists(example):          # installed-wheel run: examples are not shipped
+        import pytest
+        pytest.skip("examples/ not present in this layout")
+    r = subprocess.run([sys.executable, example], capture_output=True,
+                       encoding="cp1252", env={**_ENV, "PYTHONIOENCODING": "cp1252"})
+    assert "UnicodeEncodeError" not in (r.stderr or ""), r.stderr[-400:]
+    assert r.returncode == 0, f"the shipped example died: {(r.stderr or '')[-400:]}"
