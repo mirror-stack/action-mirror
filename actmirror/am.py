@@ -531,7 +531,52 @@ def _cli() -> int:
     cr.add_argument("ledger_b")
     cr.add_argument("--names", nargs=2, required=True, metavar=("NAME_A", "NAME_B"))
 
+    ex = sub.add_parser("export-aat",
+                        help="Export my ledger as IETF Agent Audit Trail JSONL "
+                             "(draft-sharif-agent-audit-trail-11; an unratified draft)")
+    ex.add_argument("--out", required=True, help="Output .jsonl path")
+    ex.add_argument("--session-id", default=None,
+                    help="UUIDv4 (default: derived from the genesis seal)")
+    ex.add_argument("--agent-version", default="0.0.0",
+                    help="SemVer of the recorded agent (default 0.0.0 = unknown)")
+    ex.add_argument("--trust-level", default="L0", choices=["L0", "L1", "L2", "L3", "L4"])
+    ex.add_argument("--principal-type", default=None,
+                    choices=["human", "organization", "service", "agent"],
+                    help="Who the agent acts for (default: the agent itself, self-asserted)")
+    ex.add_argument("--principal-id", default=None, help="Principal URI")
+    ex.add_argument("--authority-ref", default=None, help="Authorization evidence URI")
+    ex.add_argument("--default-outcome", default="success",
+                    choices=["success", "failure", "timeout", "denied", "escalated"],
+                    help="Outcome when payload.exit is absent (default success = 'recorded')")
+
+    va = sub.add_parser("verify-aat", help="Structurally check an AAT JSONL file (draft -11 subset)")
+    va.add_argument("aat_file")
+
     args = p.parse_args()
+    if args.cmd == "export-aat":
+        from . import aat
+        principal = None
+        if args.principal_type or args.principal_id or args.authority_ref:
+            if not (args.principal_type and args.principal_id):
+                print("🔴 --principal-type and --principal-id must be given together", file=sys.stderr)
+                return 2
+            principal = {"principal_type": args.principal_type,
+                         "principal_id": args.principal_id,
+                         "authority_ref": args.authority_ref}
+        try:
+            n = aat.export_aat(args.ledger, args.out, session_id=args.session_id,
+                               agent_version=args.agent_version, trust_level=args.trust_level,
+                               principal=principal, default_outcome=args.default_outcome)
+        except ValueError as err:
+            print(f"🔴 export refused: {err}", file=sys.stderr)
+            return 1
+        print(f"📜 Exported {n} records → {args.out}  (format: {aat.DRAFT}, "
+              "derived from the native ledger — adds no new evidence)")
+        return 0
+    if args.cmd == "verify-aat":
+        from . import aat
+        return 1 if report(f"AAT {args.aat_file}",
+                           aat.verify_aat(args.aat_file)) == "FAIL" else 0
     if args.cmd == "keygen":
         from . import identity
         pub = identity.generate(args.out)

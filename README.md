@@ -10,7 +10,7 @@ Third member of the mirror family — same DNA, new domain:
 | Tool | Audits | Question |
 |---|---|---|
 | 🪞 [measure-mirror](https://github.com/mirror-stack/measure-mirror) | AI evaluation claims | Is the **claim** honest? |
-| 🔎 [provenance-mirror](https://github.com/mirror-stack/provenance-mirror) | Content authenticity | Is the **origin** proven? |
+| 🔎 [provenance-mirror](https://github.com/mirror-stack/provenance-mirror) | Provenance signals | What origin hints are present? (not authenticated) |
 | 🪪 **action-mirror** (you are here) | Agent behaviour | **Who did what, provably?** |
 | 👁 [mirror-witness](https://github.com/mirror-stack/mirror-witness) | Cross-operator witness board | Who else **witnessed** it? |
 
@@ -134,6 +134,7 @@ am --ledger jebi.jsonl verify                              # my chain
 am --ledger seara.jsonl witness jebi.jsonl --name jebi     # pin peer head
 am --ledger seara.jsonl verify-peer jebi.jsonl --name jebi # check peer
 am cross seara.jsonl jebi.jsonl --names seara jebi         # mutual pin
+am --ledger jebi.jsonl export-aat --out jebi.aat.jsonl    # IETF AAT draft -11
 ```
 
 Demo (3-agent family, attack included): `PYTHONPATH=. python examples/demo_family.py`
@@ -153,7 +154,46 @@ Demo (3-agent family, attack included): `PYTHONPATH=. python examples/demo_famil
 | `family_verify` | [Finding] | verify the whole family |
 | `verify_signatures` | [Finding] | verify the optional signed-identity layer |
 
+| `to_aat` / `export_aat` / `verify_aat` | list / int / [Finding] | IETF AAT draft -11 export (see below) |
+
 See the **[full Guide](docs/GUIDE.md)** for each function's signature and verdicts.
+
+## Export to the IETF Agent Audit Trail format (draft)
+
+`am export-aat` writes the ledger as JSON Lines in the record format of
+**[draft-sharif-agent-audit-trail-11](https://datatracker.ietf.org/doc/html/draft-sharif-agent-audit-trail-11)**
+(2026-11-21). That is an individual Internet-Draft, not an IETF standard; it has changed
+between revisions and may change again. The exporter targets **-11 only**, and writes the
+revision into every record (`action_detail.export_profile.draft`).
+
+```bash
+am --ledger jebi.jsonl export-aat --out jebi.aat.jsonl \
+   --principal-type human --principal-id urn:user:operator --agent-version 1.0.0
+am verify-aat jebi.aat.jsonl     # fields, enums and the §6.1 prev_hash chain
+```
+
+What you get: the §3.1 REQUIRED fields, `prev_hash = hex(SHA-256(JCS(previous record)))`
+(RFC 8785), `null` on the genesis record, and the original action-mirror entry preserved
+under `action_detail.action_mirror` so the export can be checked against the native ledger.
+A ledger whose native chain fails `am verify` is **refused**, because re-chaining it would
+produce a valid-looking AAT chain over tampered content.
+
+What it does not do:
+- **No new evidence.** The export is derived from the native ledger; anyone holding that
+  ledger can regenerate it byte for byte.
+- **Fields action-mirror does not record are filled with stated defaults**: `principal`
+  (the agent itself, self-asserted), `agent_version` `0.0.0`, `trust_level` `L0`,
+  `record_phase` `post_execution`, and `outcome` `success` unless `payload.exit` is an
+  integer. Here `success` means "recorded", not "verified to have succeeded".
+- `record_id` / `session_id` are UUIDv4-formatted but derived from seals (so exports are
+  reproducible), not random.
+- Native actions become `tool_call` (`tool_name` = the action string); witness entries
+  become `decision`. No other AAT action types are inferred.
+- The optional Ed25519 `sig` signs the native seal, so it is **not** emitted as an AAT
+  `signature`. `verify-aat` does not check signatures, trust-level rules or §8 session
+  records, and cannot detect removal of the last record.
+- The JCS implementation is tested against RFC 8785's number and key-ordering rules in
+  `tests/test_aat.py`, not against an external conformance suite.
 
 ---
 
@@ -226,7 +266,7 @@ them up deliberately, not by default.)
 
 What's solid today: chain-sealed action records, content-hash attestation,
 position-pinned mutual witness with truncation/replacement detection —
-21 tests, all passing, zero dependencies.
+tested in CI on Linux and Windows, zero dependencies.
 
 ---
 

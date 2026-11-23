@@ -120,6 +120,7 @@ am --ledger jebi.jsonl verify                              # 내 체인
 am --ledger seara.jsonl witness jebi.jsonl --name jebi     # 동료 head 핀
 am --ledger seara.jsonl verify-peer jebi.jsonl --name jebi # 동료 검사
 am cross seara.jsonl jebi.jsonl --names seara jebi         # 상호 핀
+am --ledger jebi.jsonl export-aat --out jebi.aat.jsonl    # IETF AAT 초안 -11
 ```
 
 데모 (3-에이전트 가족, 공격 포함): `PYTHONPATH=. python examples/demo_family.py`
@@ -138,8 +139,41 @@ am cross seara.jsonl jebi.jsonl --names seara jebi         # 상호 핀
 | `family_round` | list | 전원이 전원을 핀 |
 | `family_verify` | [Finding] | 가족 전체 검증 |
 | `verify_signatures` | [Finding] | 선택적 서명-신원 레이어 검증 |
+| `to_aat` / `export_aat` / `verify_aat` | list / int / [Finding] | IETF AAT 초안 -11 내보내기 (아래 참조) |
 
 각 함수의 시그니처·판정은 **[완전 가이드](docs/GUIDE_KO.md)** 참조.
+
+---
+
+## IETF Agent Audit Trail 형식으로 내보내기 (초안)
+
+`am export-aat`는 원장을
+**[draft-sharif-agent-audit-trail-11](https://datatracker.ietf.org/doc/html/draft-sharif-agent-audit-trail-11)**
+(2026-11-21)의 레코드 형식(JSON Lines)으로 씁니다. 이 문서는 개인 제출 인터넷 초안이고
+IETF 표준이 아닙니다. 판마다 바뀌어 왔고 앞으로도 바뀔 수 있습니다. 내보내기는 **-11판만**
+기준으로 하며, 각 레코드의 `action_detail.export_profile.draft`에 판 번호를 기록합니다.
+
+```bash
+am --ledger jebi.jsonl export-aat --out jebi.aat.jsonl \
+   --principal-type human --principal-id urn:user:operator --agent-version 1.0.0
+am verify-aat jebi.aat.jsonl     # 필드, 열거값, §6.1 prev_hash 체인 확인
+```
+
+들어가는 것: §3.1 필수 필드, `prev_hash = hex(SHA-256(JCS(직전 레코드)))`(RFC 8785),
+첫 레코드의 `null`, 그리고 `action_detail.action_mirror` 아래 원래 action-mirror 엔트리
+(원장과 대조용). 원장 체인이 `am verify`에서 실패하면 내보내기를 **거부**합니다.
+변조된 내용 위에 멀쩡해 보이는 AAT 체인을 새로 만들게 되기 때문입니다.
+
+하지 않는 것:
+- **새 증거를 만들지 않습니다.** 원장에서 파생된 것이라, 원장을 가진 사람은 똑같이 다시 만들 수 있습니다.
+- action-mirror가 기록하지 않는 필드는 **명시된 기본값**으로 채웁니다: `principal`(에이전트 자신, 자기 주장),
+  `agent_version` `0.0.0`, `trust_level` `L0`, `record_phase` `post_execution`, `outcome`은
+  `payload.exit`이 정수일 때만 계산하고 아니면 `success`. 여기서 `success`는 "기록됨"이지 "성공이 검증됨"이 아닙니다.
+- `record_id`/`session_id`는 UUIDv4 형식이지만 봉인값에서 파생합니다(재현 가능). 무작위가 아닙니다.
+- 원래 행동은 `tool_call`(`tool_name` = 행동 문자열), 증인 엔트리는 `decision`이 됩니다. 다른 AAT 유형은 추론하지 않습니다.
+- 선택 기능인 Ed25519 `sig`는 원장 봉인값에 대한 서명이라 AAT `signature`로 **내보내지 않습니다**.
+  `verify-aat`는 서명, 신뢰 수준 규칙, §8 세션 레코드를 검사하지 않고, 마지막 레코드 삭제는 탐지하지 못합니다.
+- JCS 구현은 `tests/test_aat.py`에서 RFC 8785의 숫자·키 정렬 규칙으로 시험했고, 외부 적합성 테스트 모음으로는 시험하지 않았습니다.
 
 ---
 
@@ -182,7 +216,7 @@ am verify-sig                                              # 모든 서명 엔�
   무방비. 자주 핀하세요.
 
 오늘 견고한 것: 체인봉인 행동 기록, 내용해시 입증, 위치고정 상호증인 +
-절단/교체 탐지 — 21 테스트 통과, zero-dep.
+절단/교체 탐지 — Linux·Windows CI에서 테스트, zero-dep.
 
 ---
 
