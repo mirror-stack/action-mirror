@@ -11,4 +11,4 @@ __all__ = [
     "witness_peer", "verify_peer", "cross_witness", "family_round", "family_verify",
     "report", "Finding", "to_aat", "export_aat", "verify_aat",
 ]
-__version__ = "0.4.0"
+__version__ = "0.5.0"

@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [0.5.0] — 2026-11-23
 
 ### Added
 - **`am export-aat` / `am verify-aat`** (and `to_aat`, `export_aat`, `verify_aat`): export a
