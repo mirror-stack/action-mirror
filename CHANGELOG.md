@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **`am export-aat` / `am verify-aat`** (and `to_aat`, `export_aat`, `verify_aat`): export a
+  ledger in the record format of the IETF Internet-Draft
+  `draft-sharif-agent-audit-trail-11` (2026-11-21). The draft is an individual submission,
+  not a standard; only -11 is targeted and the revision is written into each record.
+  Includes an RFC 8785 (JCS) canonicaliser for the §6.1 `prev_hash` chain. A ledger whose
+  native chain fails verification is refused. AAT fields action-mirror does not record
+  (principal, agent_version, trust_level, outcome) are filled with documented defaults;
+  see the README section for every limitation.
+
+### Fixed
+- README said "21 tests"; the suite had grown past that. The count is no longer hard-coded.
+
 ## [0.4.0] — 2026-08-25
 
 ### Changed

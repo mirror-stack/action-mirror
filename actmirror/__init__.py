@@ -4,10 +4,11 @@ from .am import (
     witness_peer, verify_peer, cross_witness, family_round, family_verify,
     report, Finding,
 )
+from .aat import to_aat, export_aat, verify_aat
 
 __all__ = [
     "record", "history", "attest", "verify_chain", "verify_signatures",
     "witness_peer", "verify_peer", "cross_witness", "family_round", "family_verify",
-    "report", "Finding",
+    "report", "Finding", "to_aat", "export_aat", "verify_aat",
 ]
 __version__ = "0.4.0"
