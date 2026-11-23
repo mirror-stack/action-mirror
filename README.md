@@ -10,7 +10,7 @@ Third member of the mirror family — same DNA, new domain:
 | Tool | Audits | Question |
 |---|---|---|
 | 🪞 [measure-mirror](https://github.com/mirror-stack/measure-mirror) | AI evaluation claims | Is the **claim** honest? |
-| 🔎 [provenance-mirror](https://github.com/mirror-stack/provenance-mirror) | Content authenticity | Is the **origin** proven? |
+| 🔎 [provenance-mirror](https://github.com/mirror-stack/provenance-mirror) | Provenance signals | What origin hints are present? (not authenticated) |
 | 🪪 **action-mirror** (you are here) | Agent behaviour | **Who did what, provably?** |
 | 👁 [mirror-witness](https://github.com/mirror-stack/mirror-witness) | Cross-operator witness board | Who else **witnessed** it? |
 
