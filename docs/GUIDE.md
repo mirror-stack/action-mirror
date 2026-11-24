@@ -190,6 +190,7 @@ mutual tamper-evidence. Wire both up deliberately, not by default.
 | `family_round` | list | every agent pins every other |
 | `family_verify` | [Finding] | verify the whole family |
 | `verify_signatures` | [Finding] | verify the optional signed-identity layer |
+| `load_trusted_keys` | dict | read a trusted-keys file |
 
 ---
 
@@ -197,12 +198,16 @@ mutual tamper-evidence. Wire both up deliberately, not by default.
 
 Verifies the optional Ed25519 signed-identity layer (`[signing]` extra). Entries created with
 `record(..., sign_key=...)` carry a chained `pubkey` and a `sig` over the (recomputed) seal.
-`verify_signatures` confirms each signature — catching both impersonation (wrong key) and
-tampering (body changed after signing). Entries with no `pubkey` are unsigned and pass as OK (the
+`verify_signatures` confirms each signature, catching tampering (body changed after signing).
+It catches impersonation only with `trusted_keys` (agent -> pubkeys, read with
+`load_trusted_keys(path)` from `<agent> <pubkey_hex>` lines): a signature by a key not trusted for
+the entry's agent FAILs, and so does an unsigned entry from an agent that has a trusted key.
+Without trusted keys it checks only that the key written in the entry signed it. Entries with no `pubkey` are unsigned and pass as OK (the
 `who` is self-asserted). **Attribution only — not independence**: one operator can hold many keys.
 
 ```python
-am.report("identity", am.verify_signatures("jebi.jsonl"))
+am.report("identity", am.verify_signatures(
+    "jebi.jsonl", trusted_keys=am.load_trusted_keys("trusted_keys.txt")))
 ```
 
 ---

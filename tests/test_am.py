@@ -438,3 +438,77 @@ def test_append_reads_only_the_tail(tmp_path, monkeypatch):
     assert read_sizes, "nothing was read at all — the counter is not wired to the lookup"
     assert sum(read_sizes) < size // 10, (
         f"read {sum(read_sizes)} of {size} bytes — the lookup is still scanning the ledger")
+
+
+# ─── trusted keys: impersonation is only caught when the expected key is pinned ───
+def _signing_or_skip():
+    from actmirror import identity
+    if not identity.available():
+        import pytest
+        pytest.skip("signing extra not installed")
+    return identity
+
+
+def test_without_trusted_keys_a_resigned_ledger_still_passes(tmp_path):
+    """The gap trusted keys close: an impersonator signs with their OWN key and passes."""
+    identity = _signing_or_skip()
+    l = L(tmp_path)
+    mallory = str(tmp_path / "mallory.key")
+    identity.generate(mallory)
+    am.record(l, agent="jebi", action="eval", sign_key=mallory)
+    f = am.verify_signatures(l)[0]
+    assert f.level == "OK" and "NOT pinned" in f.msg
+
+
+def test_load_trusted_keys_and_impersonation(tmp_path):
+    identity = _signing_or_skip()
+    l = L(tmp_path)
+    jebi, mallory = str(tmp_path / "jebi.key"), str(tmp_path / "mallory.key")
+    jebi_pub = identity.generate(jebi)
+    identity.generate(mallory)
+    tk = tmp_path / "trusted.txt"
+    tk.write_text(f"# who may sign as whom\njebi {jebi_pub}\n", encoding="utf-8")
+    trusted = am.load_trusted_keys(str(tk))
+    assert trusted == {"jebi": {jebi_pub}}
+
+    am.record(l, agent="jebi", action="eval", sign_key=jebi)
+    am.record(l, agent="seara", action="note")            # agent with no trusted key: fine unsigned
+    assert [f.level for f in am.verify_signatures(l, trusted_keys=trusted)] == ["OK"]
+
+    am.record(l, agent="jebi", action="eval", sign_key=mallory)   # impersonation
+    am.record(l, agent="jebi", action="eval")                      # signature simply left off
+    fs = am.verify_signatures(l, trusted_keys=trusted)
+    assert fs[0].level == "FAIL"
+    assert "not trusted for its agent at entry [3]" in fs[0].msg
+    assert "unsigned although the agent has a trusted key at entry [4]" in fs[0].msg
+
+
+def test_wildcard_trusted_key_and_bad_file(tmp_path):
+    import pytest
+    identity = _signing_or_skip()
+    l = L(tmp_path)
+    k = str(tmp_path / "ops.key")
+    pub = identity.generate(k)
+    am.record(l, agent="anyone", action="x", sign_key=k)
+    assert am.verify_signatures(l, trusted_keys={"*": {pub}})[0].level == "OK"
+    bad = tmp_path / "bad.txt"
+    bad.write_text("jebi not-hex\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="bad.txt:1"):
+        am.load_trusted_keys(str(bad))
+
+
+def test_cli_verify_sig_trusted_keys_exit_code(tmp_path):
+    import subprocess, sys
+    identity = _signing_or_skip()
+    l = L(tmp_path)
+    jebi, mallory = str(tmp_path / "jebi.key"), str(tmp_path / "mallory.key")
+    jebi_pub = identity.generate(jebi)
+    identity.generate(mallory)
+    am.record(l, agent="jebi", action="eval", sign_key=mallory)
+    tk = tmp_path / "trusted.txt"
+    tk.write_text(f"jebi {jebi_pub}\n", encoding="utf-8")
+    run = lambda *a: subprocess.run([sys.executable, "-m", "actmirror.am", "--ledger", l, *a],
+                                    capture_output=True, encoding="utf-8")
+    assert run("verify-sig").returncode == 0
+    r = run("verify-sig", "--trusted-keys", str(tk))
+    assert r.returncode == 1 and "not trusted" in r.stdout

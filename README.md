@@ -152,7 +152,8 @@ Demo (3-agent family, attack included): `PYTHONPATH=. python examples/demo_famil
 | `cross_witness` | tuple | mutual pin between two ledgers |
 | `family_round` | list | every agent pins every other |
 | `family_verify` | [Finding] | verify the whole family |
-| `verify_signatures` | [Finding] | verify the optional signed-identity layer |
+| `verify_signatures` | [Finding] | verify the optional signed-identity layer (pass `trusted_keys` to check WHO signed) |
+| `load_trusted_keys` | dict | read a `<agent> <pubkey_hex>` trusted-keys file |
 
 | `to_aat` / `export_aat` / `verify_aat` | list / int / [Finding] | IETF AAT draft -11 export (see below) |
 
@@ -208,13 +209,19 @@ pip install action-mirror[signing]
 
 am keygen --out jebi.key                                   # one keypair per agent
 am record --agent jebi --action eval --target exp1 --sign jebi.key
-am verify-sig                                              # checks every signed entry
+echo "jebi <pubkey printed by keygen>" > trusted_keys.txt      # keep this OUTSIDE the ledger
+am verify-sig --trusted-keys trusted_keys.txt               # checks every signed entry
 ```
 
 Each signed entry carries a `pubkey` (chained — the claimed key can't be swapped without breaking
 the chain) and a `sig` over its seal. `verify_signatures` (CLI `verify-sig`) recomputes the seal
-from the content and checks the signature, so it catches **both** impersonation (signed with the
-wrong key) **and** tampering (body changed after signing).
+from the content and checks the signature, so it catches tampering (body changed after signing).
+
+It catches **impersonation only with trusted keys.** Without them it can only check that each
+entry was signed by the key written *in that entry*, and whoever rewrites a ledger can re-sign it
+with a fresh key. With `--trusted-keys` (lines of `<agent> <pubkey_hex>`, `*` for any agent) an
+entry signed by a key not trusted for its agent FAILs, and so does an unsigned entry from an agent
+that has a trusted key. Keep the trusted-keys file somewhere the ledger's writer cannot change.
 
 **Honest scope — do not oversell.** A signature proves *the holder of this key signed it*
 (attribution · impersonation-resistance · non-repudiation). It does **not** prove independence:

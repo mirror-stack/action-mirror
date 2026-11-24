@@ -138,7 +138,8 @@ am --ledger jebi.jsonl export-aat --out jebi.aat.jsonl    # IETF AAT 초안 -11
 | `cross_witness` | tuple | 두 원장 상호 핀 |
 | `family_round` | list | 전원이 전원을 핀 |
 | `family_verify` | [Finding] | 가족 전체 검증 |
-| `verify_signatures` | [Finding] | 선택적 서명-신원 레이어 검증 |
+| `verify_signatures` | [Finding] | 선택적 서명-신원 레이어 검증 (`trusted_keys`를 주면 누가 서명했는지 확인) |
+| `load_trusted_keys` | dict | `<agent> <pubkey_hex>` 신뢰 키 파일 읽기 |
 | `to_aat` / `export_aat` / `verify_aat` | list / int / [Finding] | IETF AAT 초안 -11 내보내기 (아래 참조) |
 
 각 함수의 시그니처·판정은 **[완전 가이드](docs/GUIDE_KO.md)** 참조.
@@ -192,8 +193,14 @@ am verify-sig                                              # 모든 서명 엔�
 ```
 
 서명 엔트리는 `pubkey`(체인됨 — 주장한 키를 체인 안 깨고 못 바꿈)와 seal에 대한 `sig`를 답니다.
-`verify_signatures`(CLI `verify-sig`)는 *내용에서 seal을 재계산*해 서명을 검증하므로, **사칭**(틀린
-키로 서명)과 **내용 위조**(서명 후 본문 변경)를 *둘 다* 잡습니다.
+`verify_signatures`(CLI `verify-sig`)는 *내용에서 seal을 재계산*해 서명을 검증하므로 **내용 위조**(서명
+후 본문 변경)를 잡습니다.
+
+**사칭은 신뢰 키가 있을 때만 잡습니다.** 신뢰 키가 없으면 각 엔트리가 *그 엔트리에 적힌* 키로 서명됐는지만
+볼 수 있고, 원장을 다시 쓰는 사람은 새 키로 다시 서명하면 됩니다. `--trusted-keys`(한 줄에
+`<agent> <pubkey_hex>`, 모든 에이전트는 `*`)를 주면, 그 에이전트에게 신뢰되지 않은 키로 서명한 엔트리와
+신뢰 키가 있는 에이전트의 무서명 엔트리가 FAIL입니다. 신뢰 키 파일은 원장을 쓰는 쪽이 고칠 수 없는 곳에
+두세요.
 
 **정직한 범위 — 안 팔기.** 서명은 *이 키 보유자가 서명했다*(귀속·사칭저항·부인불가)를 증명합니다.
 **독립은 증명 못 합니다**: 한 운영자가 키를 여럿 발급(Sybil)할 수 있고, 자기 키를 든 에이전트는
