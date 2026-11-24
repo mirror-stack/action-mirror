@@ -35,7 +35,7 @@ Honest threat model (read this before trusting it):
 Zero dependencies (stdlib only). Deterministic. Same DNA as measure-mirror.
 """
 from __future__ import annotations
-import hashlib, json, os, sys, time
+import contextlib, hashlib, json, os, sys, time
 from dataclasses import dataclass
 
 
@@ -133,18 +133,78 @@ def _seal_of(raw: bytes):
     return entry["seal"] if isinstance(entry, dict) and "seal" in entry else None
 
 
+# How long an appender waits for another writer before giving up. An append holds the
+# lock for one tail read + one line write, so reaching this means a writer is stuck.
+_LOCK_TIMEOUT_S = 60.0
+
+
+@contextlib.contextmanager
+def _ledger_lock(ledger_path: str, timeout: float = _LOCK_TIMEOUT_S):
+    """Hold an exclusive OS lock on ``<ledger>.lock`` for one read-head-then-append.
+
+    Without it two processes can read the SAME head seal and both append after it: the
+    chain forks and verify_chain() reports the honest second line as a deletion/insertion.
+    Reproduced 2026-11-24 with 4 processes x 50 record() calls on one ledger. Same lock
+    as measure-mirror's ``_ledger_lock`` (kept as a copy: both packages are stdlib-only
+    and independent).
+
+    A sidecar file, because Windows byte-range locks are mandatory and would make
+    concurrent READERS of the ledger fail. Never deleted; released by the OS if the
+    holder dies. Advisory: writers that bypass this module are not covered.
+    """
+    fd = os.open(ledger_path + ".lock", os.O_CREAT | os.O_RDWR, 0o644)
+    deadline = time.monotonic() + timeout
+    try:
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                os.lseek(fd, 0, os.SEEK_SET)
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"ledger {ledger_path!r} is locked by another writer") from None
+                    time.sleep(0.005)
+        else:
+            import fcntl
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"ledger {ledger_path!r} is locked by another writer") from None
+                    time.sleep(0.005)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def _seal(ledger_path: str, entry: dict, sign_key: str | None = None) -> dict:
-    entry["prev_seal"] = _get_last_seal(ledger_path)
-    # `seal` and `sig` are attestation fields, excluded from the content hash.
-    body = {k: v for k, v in entry.items() if k not in ("seal", "sig")}
-    entry["seal"] = hashlib.sha256(
-        json.dumps(body, sort_keys=True, ensure_ascii=False).encode()
-    ).hexdigest()
-    if sign_key is not None:
-        from . import identity
-        entry["sig"] = identity.sign(sign_key, entry["seal"])
-    with open(ledger_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    with _ledger_lock(ledger_path):
+        entry["prev_seal"] = _get_last_seal(ledger_path)
+        # `seal` and `sig` are attestation fields, excluded from the content hash.
+        body = {k: v for k, v in entry.items() if k not in ("seal", "sig")}
+        entry["seal"] = hashlib.sha256(
+            json.dumps(body, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+        if sign_key is not None:
+            from . import identity
+            entry["sig"] = identity.sign(sign_key, entry["seal"])
+        with open(ledger_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     return entry
 
 

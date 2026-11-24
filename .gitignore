@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 *promo*
+# ledger write lock (am._ledger_lock creates it next to the ledger, never deletes it)
+*.jsonl.lock
