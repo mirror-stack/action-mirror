@@ -5,7 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [0.6.0] — 2026-11-24
+
+v0.5.0 was never tagged; its changes (AAT export) ship in this release.
 
 ### Added
 - **Trusted keys for `verify_signatures` / `am verify-sig --trusted-keys FILE`.** A file of
