@@ -30,7 +30,7 @@ def test_concurrent_appenders_keep_one_chain(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = ROOT + os.pathsep + env.get("PYTHONPATH", "")
     procs = [subprocess.Popen([sys.executable, "-c", WRITER, path, str(w), "30"],
-                              env=env, stderr=subprocess.PIPE, text=True)
+                              env=env, stderr=subprocess.PIPE, encoding="utf-8")
              for w in range(4)]
     for p in procs:
         _, err = p.communicate(timeout=120)

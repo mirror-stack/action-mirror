@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Tests on non-UTF-8 consoles (e.g. Korean Windows, cp949):** test subprocesses now
+  write and are read as UTF-8 (`tests/conftest.py` + `encoding="utf-8"`); 7 tests failed
+  there because the reader thread could not decode the CLI's emoji. Tests that pin a
+  console encoding still set it themselves. No package code changed.
 - **Concurrent appenders no longer fork the chain.** `record()` and `witness_peer()`
   (the two writers, both through `_seal`) now reads the head seal and writes
   its line under an exclusive OS lock on a sidecar `<ledger>.lock` file. Before, two

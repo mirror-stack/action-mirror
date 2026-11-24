@@ -172,7 +172,7 @@ def test_verify_compares_timestamps_as_instants(tmp_path):
 
 def _cli(*args):
     return subprocess.run([sys.executable, "-m", "actmirror.am", *args],
-                          capture_output=True, text=True, env=_ENV)
+                          capture_output=True, encoding="utf-8", env=_ENV)
 
 
 def test_cli_export_and_verify(tmp_path):

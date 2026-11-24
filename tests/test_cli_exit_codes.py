@@ -24,7 +24,7 @@ _ENV = {**os.environ,
 
 def cli(*args):
     return subprocess.run([sys.executable, "-m", "actmirror.am", *args],
-                          capture_output=True, text=True, env=_ENV)
+                          capture_output=True, encoding="utf-8", env=_ENV)
 
 
 def _tamper_field(ledger: str, field: str, value):
@@ -122,7 +122,7 @@ def cli_in_encoding(encoding, *args, read_as=None):
     thread died on byte 0x81 (the 👁 in the witness line) with stdout coming back None.
     """
     env = {**_ENV, "PYTHONIOENCODING": encoding}
-    kw = {"encoding": read_as} if read_as else {"text": True}
+    kw = {"encoding": read_as or encoding}
     return subprocess.run([sys.executable, "-m", "actmirror.am", *args],
                           capture_output=True, env=env, **kw)
 
