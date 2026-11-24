@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Trusted keys for `verify_signatures` / `am verify-sig --trusted-keys FILE`.** A file of
+  `<agent> <pubkey_hex>` lines (`*` = any agent), read by the new `load_trusted_keys()`. With
+  it, an entry signed by a key not trusted for its agent FAILs, and so does an unsigned entry
+  from an agent that has a trusted key.
+
+### Changed
+- Without trusted keys, `verify_signatures` no longer says "Attribution proven". It only ever
+  checked that the key written in each entry signed it, so a ledger rewritten and re-signed
+  with a fresh key also passed. The OK message now says the keys are not pinned. The README
+  and GUIDE no longer claim impersonation is caught without trusted keys.
+
 ### Fixed
 - **Tests on non-UTF-8 consoles (e.g. Korean Windows, cp949):** test subprocesses now
   write and are read as UTF-8 (`tests/conftest.py` + `encoding="utf-8"`); 7 tests failed

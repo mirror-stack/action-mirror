@@ -254,20 +254,78 @@ def verify_chain(ledger_path: str) -> list[Finding]:
                     f"Chain intact — {len(entries)} entries verified.")]
 
 
-def verify_signatures(ledger_path: str) -> list[Finding]:
+def load_trusted_keys(path: str) -> dict[str, set[str]]:
+    """Read a trusted-keys file: one key per line, ``<agent> <pubkey_hex>``.
+
+    ``*`` as the agent trusts a key for any agent. Blank lines and ``#`` comments are
+    ignored. Keep this file OUTSIDE the ledger's control: its value is that someone who
+    rewrites the ledger cannot also rewrite which keys you expect.
+    """
+    keys: dict[str, set[str]] = {}
+    with open(path, encoding="utf-8") as f:
+        for n, line in enumerate(f, 1):
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) != 2:
+                raise ValueError(f"{path}:{n}: expected '<agent> <pubkey_hex>', got {line!r}")
+            agent, key = parts
+            try:
+                if len(bytes.fromhex(key)) != 32:
+                    raise ValueError
+            except ValueError:
+                raise ValueError(f"{path}:{n}: not a 32-byte Ed25519 public key in hex: {key!r}")
+            keys.setdefault(agent, set()).add(key.lower())
+    return keys
+
+
+def verify_signatures(ledger_path: str,
+                      trusted_keys: dict[str, set[str]] | None = None) -> list[Finding]:
     """Verify the cryptographic identity layer: every entry that carries a pubkey must have a
     valid signature of its seal under that key. Entries without a pubkey are unsigned (OK —
-    the 'who' is self-asserted, see README). Requires the [signing] extra to check signatures."""
+    the 'who' is self-asserted, see README). Requires the [signing] extra to check signatures.
+
+    Without ``trusted_keys`` this proves only that each signed entry is self-consistent: the
+    key IN the entry signed it. Anyone who rewrites a ledger can sign it again with a fresh
+    key, so that alone says nothing about WHO signed. With ``trusted_keys`` (agent -> set of
+    pubkey hex, ``"*"`` for any agent; see ``load_trusted_keys``):
+
+      - a signed entry whose key is not trusted for its ``agent`` FAILs (impersonation);
+      - an UNSIGNED entry whose ``agent`` has trusted keys FAILs — otherwise an impersonator
+        would simply leave the signature off.
+    """
     from . import identity
     entries = _load_entries(ledger_path)
     signed = [e for e in entries if e.get("pubkey")]
+    findings: list[Finding] = []
+    if trusted_keys is not None:
+        anyone = {k.lower() for k in trusted_keys.get("*", set())}
+        untrusted, missing = [], []
+        for i, e in enumerate(entries, 1):
+            agent = e.get("agent")
+            allowed = {k.lower() for k in trusted_keys.get(agent, set())} | anyone
+            if e.get("pubkey"):
+                if str(e["pubkey"]).lower() not in allowed:
+                    untrusted.append(i)
+            elif agent in trusted_keys:
+                missing.append(i)
+        if untrusted or missing:
+            parts = []
+            if untrusted:
+                parts.append(f"signed by a key not trusted for its agent at entr"
+                             f"{'y' if len(untrusted) == 1 else 'ies'} {untrusted}")
+            if missing:
+                parts.append(f"unsigned although the agent has a trusted key at entr"
+                             f"{'y' if len(missing) == 1 else 'ies'} {missing}")
+            findings.append(Finding("🔑 identity", "FAIL", "; ".join(parts) + "."))
     if not signed:
-        return [Finding("🔑 identity", "OK",
-                        "No signed entries — 'who' is self-asserted (unsigned).")]
+        return findings or [Finding("🔑 identity", "OK",
+                                    "No signed entries — 'who' is self-asserted (unsigned).")]
     if not identity.available():
-        return [Finding("🔑 identity", "WARN",
-                        f"{len(signed)} signed entries present but cryptography not installed — "
-                        "pip install action-mirror[signing] to verify.")]
+        return findings + [Finding("🔑 identity", "WARN",
+                                   f"{len(signed)} signed entries present but cryptography not "
+                                   "installed — pip install action-mirror[signing] to verify.")]
     bad = []
     for i, e in enumerate(entries, 1):
         if not e.get("pubkey"):
@@ -282,13 +340,21 @@ def verify_signatures(ledger_path: str) -> list[Finding]:
         if not e.get("sig") or not identity.verify(e["pubkey"], real_seal, e["sig"]):
             bad.append(i)
     if bad:
-        return [Finding("🔑 identity", "FAIL",
-                        f"Invalid/forged signature at entr{'y' if len(bad)==1 else 'ies'} {bad} "
-                        "— signed 'who' does not verify.")]
+        return findings + [Finding("🔑 identity", "FAIL",
+                                   f"Invalid/forged signature at entr{'y' if len(bad)==1 else 'ies'} "
+                                   f"{bad} — signed 'who' does not verify.")]
+    if findings:
+        return findings
     keys = {e["pubkey"][:12] for e in signed}
+    if trusted_keys is None:
+        return [Finding("🔑 identity", "OK",
+                        f"{len(signed)} signed entries are self-consistent across {len(keys)} "
+                        "key(s). Keys are NOT pinned: a rewritten ledger re-signed with a new key "
+                        "also passes. Pass trusted keys (CLI --trusted-keys) to check who signed.")]
     return [Finding("🔑 identity", "OK",
-                    f"{len(signed)} signed entries verified across {len(keys)} key(s). "
-                    "(Attribution proven; independence is NOT — one operator may hold many keys.)")]
+                    f"{len(signed)} signed entries verified against trusted keys "
+                    f"({len(keys)} key(s)). Attribution holds for those keys; independence is "
+                    "NOT proven — one operator may hold many keys.")]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -562,7 +628,10 @@ def _cli() -> int:
     kg = sub.add_parser("keygen", help="Generate an Ed25519 identity keypair ([signing] extra)")
     kg.add_argument("--out", required=True, help="Path to write the private key")
 
-    sub.add_parser("verify-sig", help="Verify the signed-identity layer of my ledger")
+    vs = sub.add_parser("verify-sig", help="Verify the signed-identity layer of my ledger")
+    vs.add_argument("--trusted-keys", default=None,
+                    help="File of '<agent> <pubkey_hex>' lines ('*' = any agent). Signed entries "
+                         "must use a trusted key for their agent; listed agents must sign.")
 
     h = sub.add_parser("history", help="Query sealed actions")
     h.add_argument("--agent", default=None)
@@ -643,7 +712,8 @@ def _cli() -> int:
         print(f"🔑 keypair written: {args.out}  (keep private!)\n   pubkey: {pub}")
         return 0
     if args.cmd == "verify-sig":
-        fs = verify_signatures(args.ledger)
+        trusted = load_trusted_keys(args.trusted_keys) if args.trusted_keys else None
+        fs = verify_signatures(args.ledger, trusted_keys=trusted)
         for f in fs:
             print(f"   {f}")
         return 1 if any(f.level == "FAIL" for f in fs) else 0
