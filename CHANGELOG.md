@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Concurrent appenders no longer fork the chain.** `record()` and `witness_peer()`
+  (the two writers, both through `_seal`) now reads the head seal and writes
+  its line under an exclusive OS lock on a sidecar `<ledger>.lock` file. Before, two
+  processes could read the same head and both append after it, and `verify_chain()`
+  reported the honest second line as a deletion/insertion. The lock file stays next to
+  the ledger; the lock is advisory, so writers that bypass this package are not covered.
+  Seal format unchanged. Covered by `tests/test_concurrent_append.py`.
+
 ## [0.5.0] — 2026-11-23
 
 ### Added
